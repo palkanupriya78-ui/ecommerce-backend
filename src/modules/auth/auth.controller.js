@@ -39,4 +39,59 @@ const me = asyncHandler(async (req, res) => {
   res.json({ success: true, data: req.user, reqId: req.reqId });
 });
 
-module.exports = { register, login, refresh, logout, me };
+const forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = req.validated?.body || req.body;
+  const result = await authService.forgotPassword({ email });
+  res.status(OK).json({
+    success: true,
+    message: result.message,
+    reqId: req.reqId,
+  });
+});
+
+const resetPassword = asyncHandler(async (req, res) => {
+  const { token, password } = req.validated?.body || req.body;
+  const { message, user, accessToken, refreshToken } = await authService.resetPassword({
+    token,
+    password,
+  });
+  res
+    .cookie("refreshToken", refreshToken, authService.cookieOptions())
+    .status(OK)
+    .json({
+      success: true,
+      message,
+      data: { user, accessToken },
+      reqId: req.reqId,
+    });
+});
+
+const changePassword = asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = req.validated?.body || req.body;
+  const { message, accessToken, refreshToken } = await authService.changePassword(
+    req.user.id,
+    { currentPassword, newPassword }
+  );
+
+  res
+    .cookie("refreshToken", refreshToken, authService.cookieOptions())
+    .status(OK)
+    .json({
+      success: true,
+      message,
+      data: { accessToken },
+      reqId: req.reqId,
+    });
+});
+
+const adminCreateUser = asyncHandler(async (req, res) => {
+  const result = await authService.adminCreateUser(req.validated?.body || req.body);
+  res.status(CREATED).json({
+    success: true,
+    message: result.message,
+    data: { user: result.user },
+    reqId: req.reqId,
+  });
+});
+
+module.exports = { register, login, refresh, logout, me ,forgotPassword,resetPassword,changePassword,adminCreateUser};
