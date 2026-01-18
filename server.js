@@ -14,7 +14,7 @@ async function start() {
     logger.warn(`${signal} received. Shutting down...`);
     server.close(async () => {
       await disconnectDB();
-      logger.info("✅ Shutdown complete");
+      logger.info("Shutdown complete");
       process.exit(0);
     });
   };
