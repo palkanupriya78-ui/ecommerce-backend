@@ -7,14 +7,14 @@ async function start() {
   await connectDB(process.env.MONGO_URI);
 
   const server = app.listen(port, () => {
-    logger.info(`🚀 Server running on port ${port}`);
+    logger.info(`Server running on port ${port}`);
   });
 
   const shutdown = async (signal) => {
     logger.warn(`${signal} received. Shutting down...`);
     server.close(async () => {
       await disconnectDB();
-      logger.info("✅ Shutdown complete");
+      logger.info("Shutdown complete");
       process.exit(0);
     });
   };
