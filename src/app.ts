@@ -1,7 +1,7 @@
 import express, { Request, Response } from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
-
+import helmet from "helmet";
 import requestLogger from "./middlewares/requestLogger";
 import notFound from "./middlewares/notFound";
 import errorHandler from "./middlewares/errorHandler";
@@ -12,6 +12,7 @@ const app = express();
 
 app.use(express.json());
 app.use(cookieParser());
+app.use(helmet());
 
 app.use(
   cors({
