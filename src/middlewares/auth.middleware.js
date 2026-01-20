@@ -2,12 +2,11 @@ const AppError = require("../utils/AppError");
 const asyncHandler = require("../utils/asyncHandler");
 const { verifyAccessToken } = require("../utils/tokens");
 const User = require("../modules/auth/auth.model");
-const {UNAUTHORIZED,CONFLICT}=require("../constant/httpStatus")
+const {UNAUTHORIZED,FORBIDDEN}=require("../constant/httpStatus")
 
 const protect = asyncHandler(async (req, res, next) => {
   const header = req.headers.authorization;
-
-  if (!header || !header.startsWith("Bearer ")) {
+  if (!header || !header.startsWith("Bearer")) {
     throw new AppError("Unauthorized: access token missing", UNAUTHORIZED);
   }
 
@@ -28,7 +27,7 @@ const protect = asyncHandler(async (req, res, next) => {
 });
 
 const restrictTo = (...roles) => (req, res, next) => {
-  if (!roles.includes(req.user.role)) return next(new AppError("Forbidden", CONFLICT));
+  if (!roles.includes(req.user.role)) return next(new AppError("Forbidden", FORBIDDEN));
   next();
 };
 
