@@ -3,8 +3,6 @@ const { env } = require("../config");
 
 module.exports = function errorHandler(err, req, res, next) {
   const statusCode = err.statusCode || 500;
-
-  // Logging (never log secrets / tokens / passwords)
   logger.error(
     {
       reqId: req.reqId,
@@ -20,7 +18,6 @@ module.exports = function errorHandler(err, req, res, next) {
     "api_error"
   );
 
-  // Client response
   res.status(statusCode).json({
     success: false,
     message: err.message || "Internal Server Error",
