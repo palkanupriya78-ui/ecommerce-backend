@@ -4,8 +4,9 @@ const { registerSchema, loginSchema ,adminCreateUserSchema,forgotPasswordRequest
 const authController = require("../../modules/auth/auth.controller");
 const { loginLimiter, forgotPasswordLimiter } = require("../../middlewares/rateLimiters");
 const { protect,restrictTo } = require("../../middlewares/auth.middleware");
+const {uploadProfile}=require("../../middlewares/profileUpload.middleware");
 const router = express.Router();
-router.post("/register", validate(registerSchema), authController.register);
+router.post("/register",uploadProfile.single("profilePhoto"), validate(registerSchema), authController.register);
 router.post("/login",loginLimiter, validate(loginSchema), authController.login);
 router.post("/refresh", authController.refresh);
 router.post("/logout",protect, authController.logout);

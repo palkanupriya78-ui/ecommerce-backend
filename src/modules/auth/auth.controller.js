@@ -9,6 +9,7 @@ const register = asyncHandler(async (req, res) => {
     name,
     email,
     password,
+    profilePhotoFile: req.file || null, 
   });
 
   res

@@ -7,12 +7,14 @@ import notFound from "./middlewares/notFound";
 import errorHandler from "./middlewares/errorHandler";
 import v1Routes from "./routes";
 import { API_V1, ROOT_MESSAGE } from "./constant/appConfig";
+import path from "path";
 
 const app = express();
 
 app.use(express.json());
 app.use(cookieParser());
 app.use(helmet());
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 app.use(
   cors({

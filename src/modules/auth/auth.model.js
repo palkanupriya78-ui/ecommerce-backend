@@ -27,12 +27,16 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true, minlength: 6, select: false, trim: true },
     role: { type: String, enum: [USER, ADMIN], default: USER },
+    profilePhoto: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "File",
+      default: null,
+    },
     refreshTokenHash: { type: String, select: false },
     resetPasswordTokenHash: { type: String },
     resetPasswordExpiresAt: { type: Date },
     passwordResetOtp: { type: passwordResetOtpSchema, default: null },
     passwordResetSession: { type: passwordResetSessionSchema, default: null },
-
     passwordChangedAt: { type: Date },
   },
   { timestamps: true }

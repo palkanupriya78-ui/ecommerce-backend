@@ -9,7 +9,7 @@ const {
   signRefreshToken,
   verifyRefreshToken,
 } = require("../../utils/tokens");
-
+const FileModel = require("../auth/file.model")
 const {
   UNAUTHORIZED,
   CONFLICT,
@@ -40,7 +40,7 @@ function hashToken(token:string) {
   return cryptoo.createHash("sha256").update(token).digest("hex");
 }
 
-async function register({ name, email, password }) {
+async function register({ name, email, password ,profilePhotoFile = null}) {
   email = normalizeEmail(email);
 
   if (!name) throw new AppError("Name is required", BAD_REQUEST);
@@ -53,17 +53,45 @@ async function register({ name, email, password }) {
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
   const user = await User.create({ name, email, password: passwordHash });
+  if (profilePhotoFile) {
+    const fileDoc = await FileModel.create({
+      originalName: profilePhotoFile.originalname,
+      fileName: profilePhotoFile.filename,
+      mimeType: profilePhotoFile.mimetype,
+      size: profilePhotoFile.size,
+      path: `uploads/profile/${profilePhotoFile.filename}`, // same as multer destination
+      entityType: "USER_PROFILE",
+      entityId: String(user._id),
+      uploadedBy: user._id,
+    });
 
+    await User.updateOne({ _id: user._id }, { profilePhoto: fileDoc._id });
+  }
   const accessToken = signAccessToken({ id: user._id, role: user.role });
   const refreshToken = signRefreshToken({ id: user._id });
 
   const refreshTokenHash = await bcrypt.hash(refreshToken, SALT_ROUNDS);
   await User.updateOne({ _id: user._id }, { refreshTokenHash });
-
+  const safeUser = await User.findById(user._id)
+  .select("_id name email role profilePhoto")
+  .populate("profilePhoto");
   return {
-    user: { id: user._id, name: user.name, email: user.email, role: user.role },
+    user: {
+      id: safeUser._id,
+      name: safeUser.name,
+      email: safeUser.email,
+      role: safeUser.role,
+      profilePhoto: safeUser.profilePhoto
+        ? {
+            id: safeUser.profilePhoto._id,
+            path: safeUser.profilePhoto.path,
+            mimeType: safeUser.profilePhoto.mimeType,
+            originalName: safeUser.profilePhoto.originalName,
+          }
+        : null,
+    },
     accessToken,
-    refreshToken, // controller may set cookie instead of returning this
+    refreshToken,
   };
 }
 
