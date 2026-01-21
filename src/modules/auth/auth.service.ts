@@ -1,7 +1,9 @@
-const crypto = require("crypto");
+const cryptoo = require("crypto");
 const bcrypt = require("bcryptjs");
 const User = require("../../modules/auth/auth.model");
 const AppError = require("../../utils/AppError");
+const { sendEmail } = require("../../utils/email");
+const {generateOtp,generateResetToken}=require("../../utils/crypto");
 const {
   signAccessToken,
   signRefreshToken,
@@ -14,13 +16,9 @@ const {
   BAD_REQUEST,
   NOT_FOUND,
 } = require("../../constant/httpStatus");
+const {OTP_MAX_ATTEMPTS,RESET_SESSION_MINUTES,OTP_EXP_MINUTES}=require("../../constant/authConstant")
 
 const SALT_ROUNDS = 10;
-
-
- /* Cookie options for refresh token cookie.
- * Best practice: refresh token should be stored in HttpOnly cookie at controller layer.
- */
 function cookieOptions() {
   const secure = String(process.env.COOKIE_SECURE) === "true";
   const sameSite = process.env.COOKIE_SAMESITE || "lax";
@@ -33,13 +31,13 @@ function cookieOptions() {
   };
 }
 
-function normalizeEmail(email) {
+function normalizeEmail(email?: string) {
   if (!email) return "";
   return String(email).trim().toLowerCase();
 }
 
-function hashToken(token) {
-  return crypto.createHash("sha256").update(token).digest("hex");
+function hashToken(token:string) {
+  return cryptoo.createHash("sha256").update(token).digest("hex");
 }
 
 async function register({ name, email, password }) {
@@ -124,20 +122,160 @@ async function logout(userId) {
   if (!userId) return;
   await User.updateOne({ _id: userId }, { $unset: { refreshTokenHash: 1 } });
 }
+/**
+ *  OTP FLOW - Step 1: Request OTP
+ */
+async function forgotPasswordRequestOtp({ email }) {
+  email = normalizeEmail(email);
+  if (!email) throw new AppError("Email is required", BAD_REQUEST);
+
+  // Always same message
+  const message = "If the email exists, an OTP has been sent.";
+
+  const user = await User.findOne({ email });
+  if (!user) return { message };
+
+  const otp = generateOtp();
+  const otpHash = hashToken(otp);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+  // store in user embedded object (needs schema fields)
+  await User.updateOne(
+    { _id: user._id },
+    {
+      passwordResetOtp: {
+        otpHash,
+        expiresAt,
+        attempts: 0,
+        verifiedAt: null,
+        usedAt: null,
+      },
+      passwordResetSession: null, // invalidate any old session
+    }
+  );
+
+  await sendEmail({
+    to: user.email,
+    subject: "Your OTP for Password Reset",
+    text: `Your OTP is ${otp}. It will expire in ${OTP_EXP_MINUTES} minutes.`,
+    html: `<p>Your OTP is <b>${otp}</b>. It will expire in ${OTP_EXP_MINUTES} minutes.</p>`,
+  });
+
+  return { message };
+}
 
 /**
- * Dev-friendly forgotPassword: returns rawToken (so you can test in Postman).
- * Production best practice: email the rawToken link, don't return rawToken in response.
+OTP FLOW - Step 2: Verify OTP -> returns resetToken
+ */
+async function forgotPasswordVerifyOtp({ email, otp }) {
+  email = normalizeEmail(email);
+  otp = String(otp || "").trim();
+
+  if (!email) throw new AppError("Email is required", BAD_REQUEST);
+  if (!otp) throw new AppError("OTP is required", BAD_REQUEST);
+
+  const user = await User.findOne({ email }).select("+passwordResetOtp.otpHash");
+  if (!user || !user.passwordResetOtp) throw new AppError("OTP expired or invalid", BAD_REQUEST);
+
+  const pr = user.passwordResetOtp;
+
+  if (pr.usedAt) throw new AppError("OTP already used", BAD_REQUEST);
+  if (!pr.expiresAt || pr.expiresAt <= new Date()) throw new AppError("OTP expired or invalid", BAD_REQUEST);
+
+  if ((pr.attempts || 0) >= OTP_MAX_ATTEMPTS) {
+    // mark used to block further attempts
+    await User.updateOne(
+      { _id: user._id },
+      { "passwordResetOtp.usedAt": new Date() }
+    );
+    throw new AppError("Too many attempts. Please request a new OTP.", 429);
+  }
+
+  const isMatch = hashToken(otp) === pr.otpHash;
+
+  if (!isMatch) {
+    await User.updateOne(
+      { _id: user._id },
+      { $inc: { "passwordResetOtp.attempts": 1 } }
+    );
+    throw new AppError("Invalid OTP", BAD_REQUEST);
+  }
+
+  const rawResetToken = generateResetToken();
+  const tokenHash = hashToken(rawResetToken);
+  const sessionExpiresAt = new Date(Date.now() + RESET_SESSION_MINUTES * 60 * 1000);
+
+  await User.updateOne(
+    { _id: user._id },
+    {
+      "passwordResetOtp.verifiedAt": new Date(),
+      passwordResetSession: {
+        tokenHash,
+        expiresAt: sessionExpiresAt,
+        usedAt: null,
+      },
+    }
+  );
+
+  return {
+    message: "OTP verified",
+    resetToken: rawResetToken,
+    expiresInMinutes: RESET_SESSION_MINUTES,
+  };
+}
+
+/**
+ *OTP FLOW - Step 3: Reset password using resetToken
+ */
+async function forgotPasswordReset({ resetToken, newPassword, confirmPassword }) {
+  if (!resetToken) throw new AppError("Reset token is required", UNAUTHORIZED);
+
+  if (!newPassword) throw new AppError("New password is required", BAD_REQUEST);
+  if (!confirmPassword) throw new AppError("Confirm password is required", BAD_REQUEST);
+  if (newPassword !== confirmPassword) throw new AppError("Passwords do not match", BAD_REQUEST);
+  if (String(newPassword).length < 6) throw new AppError("Password must be at least 6 characters", BAD_REQUEST);
+
+  const tokenHash = hashToken(resetToken);
+
+  const user = await User.findOne({
+    "passwordResetSession.tokenHash": tokenHash,
+    "passwordResetSession.usedAt": null,
+    "passwordResetSession.expiresAt": { $gt: new Date() },
+  }).select("+refreshTokenHash");
+
+  if (!user) throw new AppError("Invalid or expired reset token", UNAUTHORIZED);
+
+  const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+  // update password + invalidate session + otp + refresh token
+  await User.updateOne(
+    { _id: user._id },
+    {
+      password: passwordHash,
+      passwordChangedAt: new Date(),
+      "passwordResetSession.usedAt": new Date(),
+      "passwordResetOtp.usedAt": new Date(),
+      $unset: { refreshTokenHash: 1 },
+    }
+  );
+
+  return { message: "Password reset successful" };
+}
+
+/**
+ *Existing reset-link flow (keep if you still want)
+ * NOTE: removed TypeScript export syntax.
  */
 async function forgotPassword({ email }) {
   email = normalizeEmail(email);
   if (!email) throw new AppError("Email is required", BAD_REQUEST);
 
   const user = await User.findOne({ email });
+
   const message = "If the email exists, a reset link has been sent.";
   if (!user) return { message };
 
-  const rawToken = crypto.randomBytes(32).toString("hex");
+  const rawToken = cryptoo.randomBytes(32).toString("hex");
 
   await User.updateOne(
     { _id: user._id },
@@ -146,8 +284,7 @@ async function forgotPassword({ email }) {
       resetPasswordExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
     }
   );
-
-  return { message, rawToken }; // return rawToken for now (dev/testing)
+  return { message };
 }
 
 async function resetPassword({ token, password }) {
@@ -167,8 +304,6 @@ async function resetPassword({ token, password }) {
   user.resetPasswordTokenHash = undefined;
   user.resetPasswordExpiresAt = undefined;
   user.passwordChangedAt = new Date();
-
-  // revoke old refresh token(s)
   user.refreshTokenHash = undefined;
 
   await user.save();
@@ -200,9 +335,8 @@ async function changePassword(userId, { currentPassword, newPassword }) {
 
   user.password = await bcrypt.hash(newPassword, SALT_ROUNDS);
   user.passwordChangedAt = new Date();
-
-  // revoke refresh token(s) so old sessions die
   user.refreshTokenHash = undefined;
+
   await user.save();
 
   const accessToken = signAccessToken({ id: user._id, role: user.role });
@@ -217,6 +351,8 @@ async function changePassword(userId, { currentPassword, newPassword }) {
     refreshToken,
   };
 }
+
+
 
 async function adminCreateUser({ name, email, password, role }) {
   email = normalizeEmail(email);
@@ -253,4 +389,9 @@ module.exports = {
   resetPassword,
   changePassword,
   adminCreateUser,
+  forgotPasswordRequestOtp,
+  forgotPasswordVerifyOtp,
+  forgotPasswordReset
 };
+
+

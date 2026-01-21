@@ -15,26 +15,6 @@ const loginSchema = z.object({
   }),
 });
 
-const forgotPasswordSchema = z.object({
-  body: z.object({
-    email: z.string().email(),
-  }),
-});
-
-const resetPasswordSchema = z.object({
-  body: z.object({
-    token: z.string().min(10),
-    password: z.string().min(6),
-  }),
-});
-
-const changePasswordSchema = z.object({
-  body: z.object({
-    currentPassword: z.string().min(6),
-    newPassword: z.string().min(6),
-  }),
-});
-
 const adminCreateUserSchema = z.object({
   body: z.object({
     name: z.string().min(2),
@@ -44,5 +24,40 @@ const adminCreateUserSchema = z.object({
   }),
 });
 
+// Step 1: request otp
+const forgotPasswordRequestOtpSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+  }),
+});
 
-module.exports = { registerSchema, loginSchema,forgotPasswordSchema ,resetPasswordSchema,changePasswordSchema,adminCreateUserSchema};
+// Step 2: verify otp
+const forgotPasswordVerifyOtpSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+    otp: z
+      .string()
+      .trim()
+      .regex(/^\d{6}$/, "OTP must be a 6-digit number"),
+  }),
+});
+
+// Step 3: reset password (token comes from Authorization header)
+const forgotPasswordOtpResetSchema = z.object({
+  body: z
+    .object({
+      newPassword: z.string().min(6),
+      confirmPassword: z.string().min(6),
+    })
+    .refine((data) => data.newPassword === data.confirmPassword, {
+      message: "Passwords do not match",
+      path: ["confirmPassword"],
+    }),
+});
+
+
+
+
+module.exports = { registerSchema, loginSchema,adminCreateUserSchema, forgotPasswordRequestOtpSchema,
+  forgotPasswordVerifyOtpSchema,
+  forgotPasswordOtpResetSchema,};
